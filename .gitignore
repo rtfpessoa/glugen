@@ -1,0 +1,30 @@
+# Eclipse
+.classpath
+.project
+.settings/
+
+# Intellij
+.idea/
+*.iml
+*.iws
+
+# Mac
+.DS_Store
+
+# Maven
+log/
+target/
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Coverage
+coverage/
+
+# Bower
+bower_components/
+
+/lib/
+/lib-esm/
