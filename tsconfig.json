@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "typeRoots": ["./node_modules/@types", "./typings"],
     "outDir": "./lib",
     "target": "es5",
     "module": "commonjs",

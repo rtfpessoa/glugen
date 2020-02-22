@@ -49,10 +49,13 @@ module.exports = {
     'import/named': 'off',
     // We don't need this since we are using transpilation
     'node/no-unsupported-features/es-syntax': 'off',
-    'no-process-exit': 'off',
     // Too verbose
     'sonarjs/no-duplicate-string': 'off',
     // Too verbose
     'sonarjs/cognitive-complexity': 'off',
+    // Leads to less readable code and possible type issues
+    'sonarjs/prefer-immediate-return': 'off',
+    // Not very useful
+    'sonarjs/no-identical-functions': 'off',
   },
 };

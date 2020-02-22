@@ -28,3 +28,7 @@ bower_components/
 
 /lib/
 /lib-esm/
+
+/src/openapi/examples.ts
+/src/openapi/api.yaml
+api-generated.ts

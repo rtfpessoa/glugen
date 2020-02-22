@@ -21,13 +21,13 @@
     "url": "git://github.com/rtfpessoa/glugen.git"
   },
   "bugs": {
-    "url": "https://www.github.com/rtfpessoa/glugen/issues"
+    "url": "https://github.com/rtfpessoa/glugen/issues"
   },
   "engines": {
     "node": ">=10.13"
   },
   "scripts": {
-    "eslint": "eslint --ignore-path .gitignore \"**/*.{js,jsx,ts,tsx,json}\"",
+    "eslint": "eslint --ignore-path .gitignore '**/*.{js,jsx,ts,tsx,json}'",
     "lint:check": "yarn run eslint",
     "lint:fix": "yarn run eslint --fix",
     "prettier": "prettier --ignore-path .gitignore '**/*.+(js|jsx|ts|tsx|json|css|html|md|mdx)'",
@@ -74,36 +74,42 @@
     ]
   },
   "dependencies": {
+    "@openapi-contrib/openapi-schema-to-json-schema": "^3.0.0",
+    "swagger-parser": "^8.0.4",
     "yargs": "^15.0.2"
   },
   "devDependencies": {
-    "@types/jest": "25.1.1",
-    "@types/mkdirp": "0.5.2",
-    "@types/node": "13.7.0",
+    "@types/jest": "25.1.3",
+    "@types/mkdirp": "1.0.0",
+    "@types/node": "13.7.4",
+    "@types/node-fetch": "^2.5.4",
     "@types/nopt": "3.0.29",
-    "@typescript-eslint/eslint-plugin": "2.18.0",
-    "@typescript-eslint/parser": "2.18.0",
+    "@typescript-eslint/eslint-plugin": "2.20.0",
+    "@typescript-eslint/parser": "2.20.0",
     "codacy-coverage": "3.4.0",
     "eslint": "6.8.0",
     "eslint-config-prettier": "6.10.0",
-    "eslint-plugin-import": "2.20.0",
-    "eslint-plugin-jest": "23.6.0",
-    "eslint-plugin-json": "2.0.1",
+    "eslint-plugin-import": "2.20.1",
+    "eslint-plugin-jest": "23.7.0",
+    "eslint-plugin-json": "2.1.0",
     "eslint-plugin-node": "11.0.0",
     "eslint-plugin-optimize-regex": "1.1.7",
     "eslint-plugin-promise": "4.2.1",
     "eslint-plugin-sonarjs": "0.5.0",
-    "husky": "4.2.1",
+    "husky": "4.2.3",
     "is-ci-cli": "2.0.0",
     "jest": "25.1.0",
     "lint-staged": "10.0.7",
     "markdown-toc": "^1.2.0",
     "mkdirp": "1.0.3",
     "nopt": "4.0.1",
+    "node-fetch": "^2.6.0",
+    "jsonschema": "^1.2.5",
+    "openapi-types": "^1.3.5",
     "prettier": "1.19.1",
-    "ts-jest": "25.1.0",
+    "ts-jest": "25.2.1",
     "ts-node": "8.6.2",
-    "typescript": "3.7.5"
+    "typescript": "3.8.2"
   },
   "license": "MIT",
   "files": [

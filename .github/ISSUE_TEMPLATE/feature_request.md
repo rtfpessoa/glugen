@@ -1,11 +1,9 @@
 ---
-
 name: Feature request
 about: Suggest an idea for this project
-title: "Feature Request: <Title>"
-labels: [ "enhancement", "help wanted" ]
-assignees: "rtfpessoa"
-
+title: 'Feature Request: <Title>'
+labels: ['enhancement', 'help wanted']
+assignees: 'rtfpessoa'
 ---
 
 # Request

@@ -1,20 +1,26 @@
 # glugen
 
-[![Codacy Quality Badge](https://api.codacy.com/project/badge/Grade/06412dc3f5a14f568778d0db8a1f7dc8)](https://www.codacy.com/app/rtfpessoa/glugen?utm_source=github.com&utm_medium=referral&utm_content=rtfpessoa/glugen&utm_campaign=Badge_Grade)
-[![Codacy Coverage Badge](https://api.codacy.com/project/badge/Coverage/06412dc3f5a14f568778d0db8a1f7dc8)](https://www.codacy.com/app/rtfpessoa/glugen?utm_source=github.com&utm_medium=referral&utm_content=rtfpessoa/glugen&utm_campaign=Badge_Coverage)
-[![CircleCI](https://circleci.com/gh/rtfpessoa/glugen.svg?style=svg)](https://circleci.com/gh/rtfpessoa/glugen)
+[![Codacy Quality Badge](https://api.codacy.com/project/badge/Grade/f9c19d8a04ff43d5b42102ca2c628736)](https://www.codacy.com/manual/rtfpessoa/glugen?utm_source=github.com&utm_medium=referral&utm_content=rtfpessoa/glugen&utm_campaign=Badge_Grade)
+[![Codacy Coverage Badge](https://api.codacy.com/project/badge/Coverage/f9c19d8a04ff43d5b42102ca2c628736)](https://www.codacy.com/manual/rtfpessoa/glugen?utm_source=github.com&utm_medium=referral&utm_content=rtfpessoa/glugen&utm_campaign=Badge_Coverage)
+[![CircleCI](https://circleci.com/gh/rtfpessoa/glugen.svg?style=svg)](https://app.circleci.com/github/rtfpessoa/glugen/pipelines)
 
 [![npm](https://img.shields.io/npm/v/glugen.svg)](https://www.npmjs.com/package/glugen)
 [![Dependency Status](https://david-dm.org/rtfpessoa/glugen.svg)](https://david-dm.org/rtfpessoa/glugen)
 [![devDependency Status](https://david-dm.org/rtfpessoa/glugen/dev-status.svg)](https://david-dm.org/rtfpessoa/glugen#info=devDependencies)
-[![cdnjs](https://img.shields.io/cdnjs/v/glugen)](https://cdnjs.com/libraries/glugen)
 
 [![node](https://img.shields.io/node/v/glugen.svg)]() [![npm](https://img.shields.io/npm/l/glugen.svg)]()
 [![npm](https://img.shields.io/npm/dm/glugen.svg)](https://www.npmjs.com/package/glugen)
-[![All Contributors](https://img.shields.io/badge/all_contributors-22-orange.svg?style=flat-square)](#contributors)
 [![Gitter](https://badges.gitter.im/rtfpessoa/glugen.svg)](https://gitter.im/rtfpessoa/glugen?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
 
-glugen generates http clients for a openapi 3 specification.
+<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+
+[![All Contributors](https://img.shields.io/badge/all_contributors-1-orange.svg?style=flat-square)](#contributors-)
+
+<!-- ALL-CONTRIBUTORS-BADGE:END -->
+
+glugen generates http clients for an OpenAPI v3 specification.
+
+> :warning: **This is still in under early development**: Be very careful here!
 
 [![NPM](https://nodei.co/npm/glugen.png?downloads=true&downloadRank=true&stars=true)](https://nodei.co/npm/glugen/)
 
@@ -24,6 +30,9 @@ glugen generates http clients for a openapi 3 specification.
 
 - [Features](#features)
 - [Distributions](#distributions)
+- [Dependencies](#dependencies)
+  - [CLI](#cli)
+  - [Generated Code](#generated-code)
 - [Usage](#usage)
 - [Troubleshooting](#troubleshooting)
 - [Contribute](#contribute)
@@ -41,9 +50,23 @@ glugen generates http clients for a openapi 3 specification.
 - [Node Library](https://www.npmjs.org/package/glugen)
 - [NPM CLI](https://www.npmjs.org/package/glugen)
 
+## Dependencies
+
+### CLI
+
+- Check [npmjs.org](https://www.npmjs.com/package/glugen?activeTab=dependencies)
+
+### Generated Code
+
+- [url](https://www.npmjs.com/package/url)
+- [node-fetch](https://www.npmjs.com/package/node-fetch)
+- [jsonschema](https://www.npmjs.com/package/jsonschema)
+
 ## Usage
 
-<!-- TODO -->
+```sh
+glugen --input ./api.yaml --output ./api-generated.ts
+```
 
 ## Troubleshooting
 
@@ -52,7 +75,8 @@ glugen generates http clients for a openapi 3 specification.
 ## Contribute
 
 This is a developer friendly project, all the contributions are welcome. To contribute just send a pull request with
-your changes following the guidelines described in [CONTRIBUTING.md(./CONTRIBUTING.md). I will try to review them as soon as possible.
+your changes following the guidelines described in [CONTRIBUTING.md](./CONTRIBUTING.md). I will try to review them as
+soon as possible.
 
 ## Contributors
 
@@ -69,6 +93,7 @@ Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/d
 
 <!-- markdownlint-enable -->
 <!-- prettier-ignore-end -->
+
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
 This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification.

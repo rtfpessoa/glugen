@@ -4,7 +4,9 @@ about: Create a report to help us improve
 title: 'Bug Report: <Title>'
 labels: ['bug']
 assignees: 'rtfpessoa'
----# Report
+---
+
+# Report
 
 ## BEFORE FILLING A BUG
 
