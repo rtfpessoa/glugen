@@ -59,7 +59,7 @@ glugen generates http clients for an OpenAPI v3 specification.
 ### Generated Code
 
 - [url](https://www.npmjs.com/package/url)
-- [node-fetch](https://www.npmjs.com/package/node-fetch)
+- [isomorphic-unfetch](https://www.npmjs.com/package/isomorphic-unfetch)
 - [jsonschema](https://www.npmjs.com/package/jsonschema)
 
 ## Usage

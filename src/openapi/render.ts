@@ -13,17 +13,17 @@ import {
   SchemaObject,
 } from './types';
 
-function getRefName($ref: string): string {
+function capitalize(str: string): string {
+  return `${str.charAt(0).toUpperCase()}${str.slice(1)}`;
+}
+
+/** Renders the name for a reference
+ * You can pass the @isLocal as true to not render the prefix
+ *   if the type is being used in the same file as the reference
+ */
+function getRefName($ref: string, isLocal = false): string {
   const [, , componentType, name] = $ref.split('/');
-  const nameSuffix =
-    componentType === 'requestBodies'
-      ? 'Body'
-      : componentType === 'parameters'
-      ? 'Parameter'
-      : componentType === 'responses'
-      ? 'Response'
-      : '';
-  return `${name}${nameSuffix}`;
+  return `${!isLocal ? `${capitalize(componentType)}.` : ''}${name}`;
 }
 
 function isReferenceObject(obj: unknown): obj is ReferenceObject {
@@ -89,7 +89,7 @@ function renderParameterType(parameter: ParameterObject | ReferenceObject): stri
 function renderParameters(parameters: ComponentsObject['parameters'] = {}): string {
   return Object.keys(parameters)
     .map(key => {
-      return `export type ${key}Parameter = ${renderParameterType(parameters[key])};`;
+      return `export type ${key} = ${renderParameterType(parameters[key])};`;
     })
     .join('\n');
 }
@@ -107,7 +107,7 @@ function renderRequestBodyType(requestBody: RequestBodyObject | ReferenceObject)
 function renderRequestBodies(requestBodies: ComponentsObject['requestBodies'] = {}): string {
   return Object.keys(requestBodies)
     .map(key => {
-      return `export type ${key}RequestBody = ${renderRequestBodyType(requestBodies[key])};`;
+      return `export type ${key} = ${renderRequestBodyType(requestBodies[key])};`;
     })
     .join('\n');
 }
@@ -126,7 +126,7 @@ function renderResponsesType(response: ResponseObject | ReferenceObject): string
 function renderResponses(responses: ComponentsObject['responses'] = {}): string {
   return Object.keys(responses)
     .map(key => {
-      return `export type ${key}Response = ${renderResponsesType(responses[key])};`;
+      return `export type ${key} = ${renderResponsesType(responses[key])};`;
     })
     .join('\n');
 }
@@ -270,35 +270,22 @@ function renderOperation(
   const queryParamType = renderArgumentParameters(query);
   const bodyType = operation.requestBody !== undefined ? renderRequestBodyType(operation.requestBody) : undefined;
 
-  return `export function ${operation.operationId}(
-      ${pathParamType !== undefined ? `pathParams: ${pathParamType},` : ''}
-      ${headerParamType !== undefined ? `headerParams: ${headerParamType},` : ''}
-      ${queryParamType !== undefined ? `queryParams: ${queryParamType},` : ''}
-      ${bodyType !== undefined ? `body: ${bodyType},` : ''}
-    ): Promise<${returnTypes}> {
-      return performRequest(
-        '${operationName.toUpperCase()}',
-        '${pattern}',
-        ${pathParamType !== undefined ? `pathParams,` : '{},'}
-        ${headerParamType !== undefined ? `headerParams,` : '{},'}
-        ${queryParamType !== undefined ? `queryParams,` : '{},'}
-        ${bodyType !== undefined ? `body,` : 'undefined,'}
-      ).then(([responseCode, responseJson]) => {
-        const responseSchemas: { [statusCode: string]: Schema } = ${JSON.stringify(responseSchemas)};
-        const validationOptions = { allowUnknownAttributes: true, preValidateProperty: removeNulls };
-        const responseSchema: Schema | undefined = responseSchemas[responseCode.toString()];
-        const validationResponse =
-          responseSchema !== undefined
-            ? validator.validate(responseJson, responseSchema, validationOptions)
-            : { valid: false, errors: { message: \`Response status \${responseCode} does not have a schema defined.\` } };
-        if(validationResponse.valid) {
-          return responseJson as Promise<${returnTypes}> 
-        }
-
-        console.log(JSON.stringify(validationResponse, null, 2));
-        throw new Error("Failed to validate schema of response");
-      });
-  }`;
+  return `${operation.operationId}(
+  ${pathParamType !== undefined ? `pathParams: ${pathParamType},` : ''}
+  ${headerParamType !== undefined ? `headerParams: ${headerParamType},` : ''}
+  ${queryParamType !== undefined ? `queryParams: ${queryParamType},` : ''}
+  ${bodyType !== undefined ? `body: ${bodyType},` : ''}
+): Promise<${returnTypes}> {
+  return this.performRequest(
+    '${operationName.toUpperCase()}',
+    '${pattern}',
+    ${pathParamType !== undefined ? `pathParams,` : '{},'}
+    ${headerParamType !== undefined ? `headerParams,` : '{},'}
+    ${queryParamType !== undefined ? `queryParams,` : '{},'}
+    ${bodyType !== undefined ? `body,` : 'null,'}
+    ${JSON.stringify(responseSchemas)},
+  ).then((responseJson) => { return responseJson as Promise<${returnTypes}>; });
+}`;
 }
 
 function renderPath(pattern: string, path: PathItemObject, components: ResolvedComponentsObject): string {
@@ -323,33 +310,40 @@ function renderPaths(paths: PathsObject, components: ResolvedComponentsObject): 
     .join('\n');
 }
 
-function renderUtilFunctions(baseUrl: string): string {
+function renderClient(baseUrl: string, endpoints: string): string {
   return `
-  import { URL } from 'url';
-  import fetch from 'node-fetch';
-  import { Schema, Validator } from 'jsonschema';
+import { URL } from 'url';
+import fetch from 'isomorphic-unfetch';
+import { Schema, Validator } from 'jsonschema';
 
-  const baseUrl = '${baseUrl}';
-  const validator = new Validator();
+type Parameter = number | boolean | string | undefined;
+type ResponseSchemas = { [statusCode: string]: Schema };
 
-  function removeNulls(instance: { [key: string]: unknown }, property: string): void {
+export class Client {
+  readonly baseUrl: string = '${baseUrl}';
+  readonly validator: Validator = new Validator();
+
+  constructor(baseUrl?: string) {
+    if(baseUrl !== undefined) this.baseUrl = baseUrl;
+  }
+
+  removeNulls(instance: { [key: string]: unknown }, property: string): void {
     const value = instance[property];
     if (value === null || typeof value == 'undefined') {
       delete instance[property];
     }
   }
 
-  type Parameter = number | boolean | string | undefined;
-
-  function performRequest(
+  performRequest(
     method: string,
     path: string,
     pathParams: { [key: string]: Parameter } = {},
     headerParams: { [key: string]: Parameter } = {},
     queryParams: { [key: string]: Parameter } = {},
-    body?: unknown,
-  ): Promise<[number, unknown]> {
-    const requestUrl = new URL(baseUrl);
+    body: unknown,
+    responseSchemas: ResponseSchemas,
+  ): Promise<unknown> {
+    const requestUrl = new URL(this.baseUrl);
   
     const replacedPath = Object.entries(pathParams).reduce((url, [paramKey, paramValue]) => {
       return paramValue !== undefined ? url.replace(\`{\${paramKey}}\`, paramValue.toString()) : url;
@@ -366,27 +360,53 @@ function renderUtilFunctions(baseUrl: string): string {
       return headers;
     }, new Array<[string, string]>());
   
-    const bodyParam = body ? { body: JSON.stringify(body) } : {};
+    const bodyParam = body !== null ? { body: JSON.stringify(body) } : {};
   
     return fetch(requestUrl.toString(), {
       method,
       headers,
       ...bodyParam,
     }).then(async response => {
-      if (response.ok) {
-        const responseTuple: [number, unknown] = [response.status, await response.json()];
-        return responseTuple;
-      }
-  
+      const responseJson = await response.json();
+      const validationOptions = { allowUnknownAttributes: true, preValidateProperty: this.removeNulls };
+      const responseSchema: Schema | undefined = responseSchemas[response.status.toString()];
+      const validationResponse =
+        responseSchema !== undefined
+          ? this.validator.validate(responseJson, responseSchema, validationOptions)
+          : { valid: false, errors: { message: \`Response status \${response.status} does not have a schema defined.\` } };
+      if (validationResponse.valid) return responseJson;
+
       const errorBody = await response.body.read().toString('utf-8');
-      throw new Error(\`Request did not succeed got \${response.status} and \${errorBody}\`);
+      throw new Error(\`Failed to validate schema of response with status \${response.status} and body:\\n\${errorBody}\`);
     });
-  }`;
+  }
+
+  ${endpoints}
+}`;
+}
+
+function renderEmptyExport(): string {
+  return `export {};`;
+}
+
+function renderSchemaTypeImports(basePath: string): string {
+  return `/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable import/namespace */
+// @ts-nocheck
+import * as Schemas from '${basePath}/schemas';`;
+}
+
+function renderTypeImports(basePath: string): string {
+  return `${renderSchemaTypeImports(basePath)}
+import * as RequestBodies from '${basePath}/requestBodies';
+import * as Parameters from '${basePath}/parameters';
+import * as Responses from '${basePath}/responses';`;
 }
 
 import Parser from 'swagger-parser';
 import { OpenAPIV3 } from 'openapi-types';
 import fs from 'fs';
+import path from 'path';
 
 function isOpenAPIV3Document(obj: unknown): obj is OpenAPIV3.Document {
   return (obj as OpenAPIV3.Document).openapi !== undefined;
@@ -401,30 +421,44 @@ export async function render(input: string, output: string): Promise<void> {
     throw new Error('You must provide a valid OpenAPI v3 document. Swagger v2 is not supported.');
   }
 
-  // TODO: Handle multiple servers
-  const baseUrl = document.servers?.[0].url ?? 'http://localhost:9000';
+  if (!fs.existsSync(output) || fs.lstatSync(output).isDirectory()) {
+    const modelsOutput = path.join(output, 'models');
+    fs.mkdirSync(modelsOutput, { recursive: true });
 
-  const content = [
-    renderSchema(document.components?.schemas),
-    // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
-    // @ts-ignore
-    renderRequestBodies(document.components?.requestBodies),
-    // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
-    // @ts-ignore
-    renderParameters(document.components?.parameters),
-    // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
-    // @ts-ignore
-    renderResponses(document.components?.responses),
-    renderUtilFunctions(baseUrl),
-    // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
-    // @ts-ignore
-    renderPaths(document.paths, documentDereferenced.components),
-  ].join('\n\n');
+    const schemasStr = [renderSchemaTypeImports('./'), renderSchema(document.components?.schemas)].join('\n\n');
+    fs.writeFileSync(`${modelsOutput}/schemas.ts`, schemasStr);
 
-  if (fs.existsSync(output) && fs.lstatSync(output).isDirectory()) {
-    fs.mkdirSync(output, { recursive: true });
-    fs.writeFileSync(`${output}/api-generated.ts`, content);
+    const requestBodiesStr = [
+      renderSchemaTypeImports('./'),
+      // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
+      // @ts-ignore
+      renderRequestBodies(document.components?.requestBodies),
+      renderEmptyExport(),
+    ].join('\n\n');
+    fs.writeFileSync(`${modelsOutput}/requestBodies.ts`, requestBodiesStr);
+
+    // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
+    // @ts-ignore
+    const parametersStr = renderParameters(document.components?.parameters);
+    fs.writeFileSync(`${modelsOutput}/parameters.ts`, parametersStr);
+
+    const responsesStr = [
+      renderSchemaTypeImports('./'),
+      // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
+      // @ts-ignore
+      renderResponses(document.components?.responses),
+      renderEmptyExport(),
+    ].join('\n\n');
+    fs.writeFileSync(`${modelsOutput}/responses.ts`, responsesStr);
+
+    // TODO: Handle multiple servers
+    const baseUrl = document.servers?.[0].url ?? 'http://localhost:9000';
+    // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
+    // @ts-ignore
+    const endpoints = renderPaths(document.paths, documentDereferenced.components);
+    const clientStr = [renderTypeImports('./models'), renderClient(baseUrl, endpoints)].join('\n\n');
+    fs.writeFileSync(`${output}/client.ts`, clientStr);
   } else {
-    fs.writeFileSync(output, content);
+    throw new Error(`Path ${output} already exists and is not a directory`);
   }
 }
