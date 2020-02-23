@@ -123,14 +123,6 @@ function renderResponsesType(response: ResponseObject | ReferenceObject): string
   }
 }
 
-function renderResponses(responses: ComponentsObject['responses'] = {}): string {
-  return Object.keys(responses)
-    .map(key => {
-      return `export type ${key} = ${renderResponsesType(responses[key])};`;
-    })
-    .join('\n');
-}
-
 function resolveParameter(param: ReferenceObject, components: ResolvedComponentsObject): ParameterObject {
   const [, , componentType, objectName] = param.$ref.split('/');
 
@@ -177,6 +169,64 @@ function resolveSchema(schema: ReferenceObject, components: ResolvedComponentsOb
   }
 
   return resolvedSchema;
+}
+
+function getOperations(path: PathItemObject): Array<[string, OperationObject]> {
+  const operations: Array<[string, OperationObject]> = [];
+  if (path.get !== undefined) operations.push(['GET', path.get]);
+  if (path.put !== undefined) operations.push(['PUT', path.put]);
+  if (path.post !== undefined) operations.push(['POST', path.post]);
+  if (path.patch !== undefined) operations.push(['PATCH', path.patch]);
+  if (path.delete !== undefined) operations.push(['DELETE', path.delete]);
+
+  return operations;
+}
+
+function renderResponses(
+  paths: PathsObject,
+  responses: ComponentsObject['responses'] = {},
+  components: ResolvedComponentsObject,
+): string {
+  const renderedOperationsResponseBodyTypes = Object.entries(paths)
+    .map(([, pathObject]) => {
+      const operations = getOperations(pathObject);
+      const renderedResponseBodyTypes = operations.map(([, operation]) => {
+        if (operation.operationId === undefined) throw new Error('');
+
+        const operationResponses = Object.entries(operation.responses || {});
+
+        const renderedResponseBodyTypes = operationResponses
+          .map(([responseKey]) => `${operation.operationId}${responseKey}`)
+          .join(' | ');
+        const renderedResponseBodyAggregatedType = `export type ${operation.operationId}Response = ${renderedResponseBodyTypes};`;
+
+        const renderedResponseBodyType = operationResponses.reduce((responses, [responseKey, response]) => {
+          const dereferencedResponse = isReferenceObject(response) ? resolveResponse(response, components) : response;
+          const responseSchema = dereferencedResponse.content?.['application/json']?.schema;
+          const renderedResponseBody = responseSchema !== undefined ? renderObject(responseSchema) : 'void';
+
+          const responseBodyType = `export type ${operation.operationId}${responseKey} = {
+  kind: ${responseKey};
+  value: ${renderedResponseBody};
+};`;
+
+          return `${responses}\n${responseBodyType}`;
+        }, '');
+        return renderedResponseBodyAggregatedType + renderedResponseBodyType + '\n';
+      });
+      return renderedResponseBodyTypes;
+    })
+    .join('\n');
+
+  return (
+    renderedOperationsResponseBodyTypes +
+    '\n\n' +
+    Object.keys(responses)
+      .map(key => {
+        return `export type ${key} = ${renderResponsesType(responses[key])};`;
+      })
+      .join('\n')
+  );
 }
 
 function renderArgumentParameters(params: Array<RenderableParameter>): string | undefined {
@@ -256,15 +306,6 @@ function renderOperation(
     };
   }, {});
 
-  const responses = Object.entries(operation.responses || {}).reduce((responses, [responseKey, response]) => {
-    return {
-      ...responses,
-      [responseKey]: renderResponsesType(response),
-    };
-  }, {});
-
-  const returnTypes = Array.from(new Set(Object.values(responses)).values()).join(' | ');
-
   const pathParamType = renderArgumentParameters(path);
   const headerParamType = renderArgumentParameters(header);
   const queryParamType = renderArgumentParameters(query);
@@ -275,7 +316,7 @@ function renderOperation(
   ${headerParamType !== undefined ? `headerParams: ${headerParamType},` : ''}
   ${queryParamType !== undefined ? `queryParams: ${queryParamType},` : ''}
   ${bodyType !== undefined ? `body: ${bodyType},` : ''}
-): Promise<${returnTypes}> {
+): Promise<Responses.${operation.operationId}Response> {
   return this.performRequest(
     '${operationName.toUpperCase()}',
     '${pattern}',
@@ -284,18 +325,13 @@ function renderOperation(
     ${queryParamType !== undefined ? `queryParams,` : '{},'}
     ${bodyType !== undefined ? `body,` : 'null,'}
     ${JSON.stringify(responseSchemas)},
-  ).then((responseJson) => { return responseJson as Promise<${returnTypes}>; });
+  ).then((responseJson) => { return responseJson as Promise<Responses.${operation.operationId}Response>; });
 }`;
 }
 
 function renderPath(pattern: string, path: PathItemObject, components: ResolvedComponentsObject): string {
   const commonParameters = path.parameters || [];
-  const operations: Array<[string, OperationObject]> = [];
-  if (path.get !== undefined) operations.push(['GET', path.get]);
-  if (path.put !== undefined) operations.push(['PUT', path.put]);
-  if (path.post !== undefined) operations.push(['POST', path.post]);
-  if (path.patch !== undefined) operations.push(['PATCH', path.patch]);
-  if (path.delete !== undefined) operations.push(['DELETE', path.delete]);
+  const operations: Array<[string, OperationObject]> = getOperations(path);
 
   return operations
     .map(([operationName, operation]) =>
@@ -374,7 +410,12 @@ export class Client {
         responseSchema !== undefined
           ? this.validator.validate(responseJson, responseSchema, validationOptions)
           : { valid: false, errors: { message: \`Response status \${response.status} does not have a schema defined.\` } };
-      if (validationResponse.valid) return responseJson;
+      if (validationResponse.valid) {
+        return {
+          kind: response.status,
+          value: responseJson
+        };
+      }
 
       const errorBody = await response.body.read().toString('utf-8');
       throw new Error(\`Failed to validate schema of response with status \${response.status} and body:\\n\${errorBody}\`);
@@ -446,7 +487,7 @@ export async function render(input: string, output: string): Promise<void> {
       renderSchemaTypeImports('./'),
       // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
       // @ts-ignore
-      renderResponses(document.components?.responses),
+      renderResponses(document.paths, document.components?.responses),
       renderEmptyExport(),
     ].join('\n\n');
     fs.writeFileSync(`${modelsOutput}/responses.ts`, responsesStr);
