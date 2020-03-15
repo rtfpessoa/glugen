@@ -31,4 +31,4 @@ bower_components/
 
 /src/openapi/examples.ts
 /src/openapi/api.yaml
-api-generated.ts
+/src/openapi/generated

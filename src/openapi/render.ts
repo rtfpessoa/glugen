@@ -444,7 +444,7 @@ import * as Parameters from '${basePath}/parameters';
 import * as Responses from '${basePath}/responses';`;
 }
 
-import Parser from 'swagger-parser';
+import SwaggerParser from '@apidevtools/swagger-parser';
 import { OpenAPIV3 } from 'openapi-types';
 import fs from 'fs';
 import path from 'path';
@@ -454,8 +454,9 @@ function isOpenAPIV3Document(obj: unknown): obj is OpenAPIV3.Document {
 }
 
 export async function render(input: string, output: string): Promise<void> {
-  const document = await Parser.parse(input);
-  const documentDereferenced = await Parser.dereference(input);
+  const parser = new SwaggerParser();
+  const document = await parser.parse(input);
+  const documentDereferenced = await parser.dereference(input);
 
   // TODO: Support Swagger v2
   if (!isOpenAPIV3Document(document) || !isOpenAPIV3Document(documentDereferenced)) {
