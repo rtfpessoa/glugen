@@ -445,7 +445,8 @@ import * as Responses from '${basePath}/responses';`;
 }
 
 import SwaggerParser from '@apidevtools/swagger-parser';
-import { OpenAPIV3 } from 'openapi-types';
+import { OpenAPI, OpenAPIV3 } from 'openapi-types';
+import swagger2openapi from 'swagger2openapi';
 import fs from 'fs';
 import path from 'path';
 
@@ -453,15 +454,31 @@ function isOpenAPIV3Document(obj: unknown): obj is OpenAPIV3.Document {
   return (obj as OpenAPIV3.Document).openapi !== undefined;
 }
 
-export async function render(input: string, output: string): Promise<void> {
+async function loadOpenAPI(filename: string): Promise<[OpenAPIV3.Document, OpenAPIV3.Document]> {
   const parser = new SwaggerParser();
-  const document = await parser.parse(input);
-  const documentDereferenced = await parser.dereference(input);
 
-  // TODO: Support Swagger v2
-  if (!isOpenAPIV3Document(document) || !isOpenAPIV3Document(documentDereferenced)) {
-    throw new Error('You must provide a valid OpenAPI v3 document. Swagger v2 is not supported.');
+  let filenameToParse = filename;
+  let parsedDocument: OpenAPI.Document = await parser.parse(filename);
+  if (!isOpenAPIV3Document(parsedDocument)) {
+    const apiObject = (await swagger2openapi.convertFile(filename, { anchors: true })).openapi;
+    const tmpDirectory = fs.mkdtempSync('glugen');
+    const tmpFile = path.join(tmpDirectory, 'api.json');
+    fs.writeFileSync(tmpFile, JSON.stringify(apiObject));
+    filenameToParse = tmpFile;
+    parsedDocument = await parser.parse(filenameToParse);
   }
+
+  const dereferencedDocument: OpenAPI.Document = await parser.dereference(filenameToParse);
+
+  if (!isOpenAPIV3Document(parsedDocument) || !isOpenAPIV3Document(dereferencedDocument)) {
+    throw new Error('Problem occured while preparing your specification');
+  }
+
+  return [parsedDocument, dereferencedDocument];
+}
+
+export async function render(filename: string, output: string): Promise<void> {
+  const [document, documentDereferenced] = await loadOpenAPI(filename);
 
   if (!fs.existsSync(output) || fs.lstatSync(output).isDirectory()) {
     const modelsOutput = path.join(output, 'models');

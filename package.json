@@ -74,8 +74,9 @@
     ]
   },
   "dependencies": {
-    "@openapi-contrib/openapi-schema-to-json-schema": "^3.0.0",
     "@apidevtools/swagger-parser": "^9.0.1",
+    "@openapi-contrib/openapi-schema-to-json-schema": "^3.0.0",
+    "swagger2openapi": "^6.0.0",
     "yargs": "^15.3.0"
   },
   "devDependencies": {
