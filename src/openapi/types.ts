@@ -1,32 +1,19 @@
-export type ObjectType = 'object';
 export type ArrayType = 'array';
 // type EnumType = 'enum';
 
-export type TSValueTypes = 'null' | 'boolean' | 'number' | 'string';
+export type TSValueTypes = 'null' | 'boolean' | 'number' | 'string' | 'undefined' | 'any';
 
 // Not Used:
-//   - any
 //   - void
-//   - undefined
 //   - never
-//   - unknown
 
-export type OAValueTypes = 'null' | 'boolean' | 'number' | 'string' | 'integer';
-// type OATypes = OAValueTypes | ObjectType | ArrayType;
-
-export const toTSType: { [key in OAValueTypes]: TSValueTypes } = {
-  null: 'null',
-  boolean: 'boolean',
-  number: 'number',
-  string: 'string',
-  integer: 'number',
-};
+export type OANonArrayTypes = 'null' | 'boolean' | 'number' | 'string' | 'integer' | 'undefined' | 'any' | 'object';
 
 export interface ReferenceObject {
   $ref: string;
 }
 
-export type NonArraySchemaObjectType = OAValueTypes | ObjectType;
+export type NonArraySchemaObjectType = OANonArrayTypes;
 export type ArraySchemaObjectType = ArrayType;
 
 export type SchemaObject = ArraySchemaObject | NonArraySchemaObject;
@@ -45,7 +32,8 @@ export interface BaseSchemaObject {
     [name: string]: OAObject;
   };
   allOf?: Array<OAObject>;
-  anyOf?: Array<OAObject>;
+  oneOf?: Array<OAObject>;
+  // anyOf?: Array<OAObject>;
   nullable?: boolean;
 }
 

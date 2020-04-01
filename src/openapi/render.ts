@@ -1,7 +1,8 @@
+import ts, { QualifiedName } from 'typescript';
+
 import {
   ReferenceObject,
   OAObject,
-  toTSType,
   ComponentsObject,
   ParameterObject,
   RequestBodyObject,
@@ -13,60 +14,72 @@ import {
   SchemaObject,
 } from './types';
 
+import * as cg from './codegen';
+
 function capitalize(str: string): string {
   return `${str.charAt(0).toUpperCase()}${str.slice(1)}`;
 }
 
-/** Renders the name for a reference
- * You can pass the @isLocal as true to not render the prefix
- *   if the type is being used in the same file as the reference
- */
-function getRefName($ref: string, isLocal = false): string {
+function getRefName($ref: string): QualifiedName {
   const [, , componentType, name] = $ref.split('/');
-  return `${!isLocal ? `${capitalize(componentType)}.` : ''}${name}`;
+  return ts.createQualifiedName(ts.createIdentifier(capitalize(componentType)), name);
+}
+
+function isNullable(object: OAObject): boolean {
+  return !!(object && 'nullable' in object);
 }
 
 function isReferenceObject(obj: unknown): obj is ReferenceObject {
   return (obj as ReferenceObject).$ref !== undefined;
 }
 
-function renderObject(object: OAObject): string {
-  if (isReferenceObject(object)) {
-    // RefType
-    return getRefName(object.$ref);
-  } else {
-    const nullablePart = object.nullable ?? false ? ' | null' : '';
-    if (object.enum !== undefined) {
-      // EnumType
-      return `${object.enum.map(value => `'${value}'`).join(' | ')}${nullablePart}`;
-    } else if (object.type == 'array') {
-      // ArrayType
-      return `${object.uniqueItems ? 'Set' : 'Array'}<${renderObject(object.items)}>${nullablePart}`;
-    } else if (object.type == 'object') {
-      // ObjectType
-      if (object.properties !== undefined) {
-        return (
-          '{ ' +
-          Object.entries(object.properties)
-            .map(([propertyKey, propertyValue]) => {
-              const required = object.required ?? [];
-              return `${propertyKey}${required.includes(propertyKey) ? '' : '?'}: ${renderObject(propertyValue)};`;
-            })
-            .join(' ') +
-          ' }'
-        );
-      } else if (object.anyOf !== undefined) {
-        return object.anyOf.map(object => renderObject(object)).join(' | ');
-      } else if (object.allOf !== undefined) {
-        return object.allOf.map(object => renderObject(object)).join(' & ');
-      } else {
-        throw new Error('Could not render object without properties, anyOf or allOf');
-      }
-    }
+function getTypeFromSchema(object: OAObject): ts.TypeNode {
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define
+  const type = renderObjectAux(object);
+  return isNullable(object) ? ts.createUnionTypeNode([type, cg.keywordType.null]) : type;
+}
 
-    // ValueType
-    return `${toTSType[object.type]}${nullablePart}`;
+function renderObjectAux(object: OAObject): ts.TypeNode {
+  if (isReferenceObject(object)) {
+    const name = getRefName(object.$ref);
+    return ts.createTypeReferenceNode(name, undefined);
+  } else {
+    if (object.enum !== undefined) {
+      return ts.createUnionTypeNode(
+        object.enum.map(value => ts.createLiteralTypeNode(ts.createStringLiteral(value.toString()))),
+      );
+    } else if (object.type == 'array' && 'items' in object) {
+      // TODO: How can we create a Set instead of an Array when `uniqueItems === true` ?
+      return ts.createArrayTypeNode(getTypeFromSchema(object.items));
+    } else if (object.type === 'object') {
+      if (object.properties !== undefined) {
+        const members = Object.entries(object.properties).map(([propertyKey, propertyValue]) => {
+          const required = object.required ?? [];
+          return cg.createPropertySignature({
+            questionToken: !required.includes(propertyKey),
+            name: propertyKey,
+            type: getTypeFromSchema(propertyValue),
+          });
+        });
+        return ts.createTypeLiteralNode(members);
+      } else if (object.oneOf !== undefined) {
+        return ts.createUnionTypeNode(object.oneOf.map(getTypeFromSchema));
+      } else if (object.allOf !== undefined) {
+        return ts.createIntersectionTypeNode(object.allOf.map(getTypeFromSchema));
+      }
+    } else if (object.type !== undefined) {
+      return cg.keywordType[object.type];
+    }
   }
+
+  console.log('');
+  console.log(JSON.stringify(object, null, 2));
+  console.log('');
+  return cg.keywordType.any;
+}
+
+function renderObject(object: OAObject): string {
+  return cg.printNode(renderObjectAux(object));
 }
 
 function renderSchema(schemas: ComponentsObject['schemas'] = {}): string {
@@ -79,11 +92,7 @@ function renderSchema(schemas: ComponentsObject['schemas'] = {}): string {
 }
 
 function renderParameterType(parameter: ParameterObject | ReferenceObject): string {
-  if (isReferenceObject(parameter)) {
-    return getRefName(parameter.$ref);
-  } else {
-    return renderObject(parameter.schema);
-  }
+  return isReferenceObject(parameter) ? renderObject(parameter) : renderObject(parameter.schema);
 }
 
 function renderParameters(parameters: ComponentsObject['parameters'] = {}): string {
@@ -96,7 +105,7 @@ function renderParameters(parameters: ComponentsObject['parameters'] = {}): stri
 
 function renderRequestBodyType(requestBody: RequestBodyObject | ReferenceObject): string {
   if (isReferenceObject(requestBody)) {
-    return getRefName(requestBody.$ref);
+    return renderObject(requestBody);
   } else {
     const required = requestBody.required ?? false;
     const requiredSuffix = required ? '' : ' | null';
@@ -114,7 +123,7 @@ function renderRequestBodies(requestBodies: ComponentsObject['requestBodies'] = 
 
 function renderResponsesType(response: ResponseObject | ReferenceObject): string {
   if (isReferenceObject(response)) {
-    return getRefName(response.$ref);
+    return renderObject(response);
   } else if (response.content?.['application/json']?.schema !== undefined) {
     return renderObject(response.content['application/json'].schema);
   } else {
@@ -469,6 +478,11 @@ async function loadOpenAPI(filename: string): Promise<[OpenAPIV3.Document, OpenA
   }
 
   const dereferencedDocument: OpenAPI.Document = await parser.dereference(filenameToParse);
+
+  if (filenameToParse !== filename) {
+    fs.unlinkSync(filenameToParse);
+    fs.rmdirSync(path.dirname(filenameToParse));
+  }
 
   if (!isOpenAPIV3Document(parsedDocument) || !isOpenAPIV3Document(dereferencedDocument)) {
     throw new Error('Problem occured while preparing your specification');
