@@ -4,13 +4,7 @@ module.exports = {
   testEnvironment: 'node',
   coverageDirectory: './coverage',
   coverageReporters: ['lcov', 'text', 'html', 'json', 'cobertura', 'clover'],
-  collectCoverageFrom: [
-    'src/**/*.ts',
-    '!src/ui/**',
-    '!src/glugen-templates.ts',
-    '!src/__tests__/**',
-    '!node_modules/**',
-  ],
+  collectCoverageFrom: ['src/**/*.ts', '!src/__tests__/**', '!node_modules/**'],
   coverageThreshold: {
     global: {
       statements: 0,

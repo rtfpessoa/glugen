@@ -97,7 +97,7 @@ export interface ComponentsObject {
 }
 
 export interface OperationObject {
-  operationId?: string;
+  operationId: string;
   parameters?: Array<ReferenceObject | ParameterObject>;
   requestBody?: ReferenceObject | RequestBodyObject;
   responses?: ResponsesObject;

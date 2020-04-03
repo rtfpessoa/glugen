@@ -1,4 +1,10 @@
+import fs from 'fs';
+import path from 'path';
+
 import ts, { QualifiedName } from 'typescript';
+import SwaggerParser from '@apidevtools/swagger-parser';
+import { OpenAPI, OpenAPIV3 } from 'openapi-types';
+import swagger2openapi from 'swagger2openapi';
 
 import {
   ReferenceObject,
@@ -13,7 +19,6 @@ import {
   PathsObject,
   SchemaObject,
 } from './types';
-
 import * as cg from './codegen';
 
 function capitalize(str: string): string {
@@ -25,12 +30,12 @@ function getRefName($ref: string): QualifiedName {
   return ts.createQualifiedName(ts.createIdentifier(capitalize(componentType)), name);
 }
 
-function isNullable(object: OAObject): boolean {
-  return !!(object && 'nullable' in object);
-}
-
 function isReferenceObject(obj: unknown): obj is ReferenceObject {
   return (obj as ReferenceObject).$ref !== undefined;
+}
+
+function isNullable(object: OAObject): boolean {
+  return object && typeof object === 'object' && 'nullable' in object;
 }
 
 function getTypeFromSchema(object: OAObject): ts.TypeNode {
@@ -72,64 +77,49 @@ function renderObjectAux(object: OAObject): ts.TypeNode {
     }
   }
 
-  console.log('');
-  console.log(JSON.stringify(object, null, 2));
-  console.log('');
   return cg.keywordType.any;
 }
 
-function renderObject(object: OAObject): string {
-  return cg.printNode(renderObjectAux(object));
+function renderSchema(schemas: ComponentsObject['schemas'] = {}): ts.TypeAliasDeclaration[] {
+  return Object.keys(schemas).map(key => {
+    return ts.createTypeAliasDeclaration([], [cg.modifier.export], key, [], renderObjectAux(schemas[key]));
+  });
 }
 
-function renderSchema(schemas: ComponentsObject['schemas'] = {}): string {
-  return Object.keys(schemas)
-    .map(key => {
-      const object = schemas[key];
-      return `export type ${key} = ${renderObject(object)};`;
-    })
-    .join('\n');
+function renderParameterType(parameter: ParameterObject | ReferenceObject): ts.TypeNode {
+  return isReferenceObject(parameter) ? renderObjectAux(parameter) : renderObjectAux(parameter.schema);
 }
 
-function renderParameterType(parameter: ParameterObject | ReferenceObject): string {
-  return isReferenceObject(parameter) ? renderObject(parameter) : renderObject(parameter.schema);
+function renderParameters(parameters: ComponentsObject['parameters'] = {}): ts.TypeAliasDeclaration[] {
+  return Object.keys(parameters).map(key => {
+    return ts.createTypeAliasDeclaration([], [cg.modifier.export], key, [], renderParameterType(parameters[key]));
+  });
 }
 
-function renderParameters(parameters: ComponentsObject['parameters'] = {}): string {
-  return Object.keys(parameters)
-    .map(key => {
-      return `export type ${key} = ${renderParameterType(parameters[key])};`;
-    })
-    .join('\n');
-}
-
-function renderRequestBodyType(requestBody: RequestBodyObject | ReferenceObject): string {
+function renderRequestBodyType(requestBody: RequestBodyObject | ReferenceObject): ts.TypeNode {
   if (isReferenceObject(requestBody)) {
-    return renderObject(requestBody);
+    return renderObjectAux(requestBody);
   } else {
     const required = requestBody.required ?? false;
-    const requiredSuffix = required ? '' : ' | null';
-    return `${renderObject(requestBody.content['application/json'].schema)}${requiredSuffix}`;
+    const type = renderObjectAux(requestBody.content['application/json'].schema);
+    return required ? type : ts.createUnionTypeNode([type, cg.keywordType.null]);
   }
 }
 
-function renderRequestBodies(requestBodies: ComponentsObject['requestBodies'] = {}): string {
-  return Object.keys(requestBodies)
-    .map(key => {
-      return `export type ${key} = ${renderRequestBodyType(requestBodies[key])};`;
-    })
-    .join('\n');
+function renderRequestBodies(requestBodies: ComponentsObject['requestBodies'] = {}): ts.TypeAliasDeclaration[] {
+  return Object.keys(requestBodies).map(key => {
+    return ts.createTypeAliasDeclaration([], [cg.modifier.export], key, [], renderRequestBodyType(requestBodies[key]));
+  });
 }
 
-function renderResponsesType(response: ResponseObject | ReferenceObject): string {
+function renderResponsesType(response: ResponseObject | ReferenceObject): ts.TypeNode {
   if (isReferenceObject(response)) {
-    return renderObject(response);
+    return renderObjectAux(response);
   } else if (response.content?.['application/json']?.schema !== undefined) {
-    return renderObject(response.content['application/json'].schema);
-  } else {
-    // TODO: Check what is the type of an empty response
-    return 'null';
+    return renderObjectAux(response.content['application/json'].schema);
   }
+
+  return cg.keywordType.any;
 }
 
 function resolveParameter(param: ReferenceObject, components: ResolvedComponentsObject): ParameterObject {
@@ -195,62 +185,79 @@ function renderResponses(
   paths: PathsObject,
   responses: ComponentsObject['responses'] = {},
   components: ResolvedComponentsObject,
-): string {
-  const renderedOperationsResponseBodyTypes = Object.entries(paths)
-    .map(([, pathObject]) => {
-      const operations = getOperations(pathObject);
-      const renderedResponseBodyTypes = operations.map(([, operation]) => {
-        if (operation.operationId === undefined) throw new Error('');
+): ts.TypeAliasDeclaration[] {
+  const renderedOperationsResponseBodyTypes = Object.entries(paths).flatMap(([, pathObject]) => {
+    const operations = getOperations(pathObject);
+    return operations.flatMap(([, operation]) => {
+      if (operation.operationId === undefined) throw new Error('Could not find operationId, it is mandatory !!!');
 
-        const operationResponses = Object.entries(operation.responses || {});
+      const operationResponses = Object.entries(operation.responses || {});
 
-        const renderedResponseBodyTypes = operationResponses
-          .map(([responseKey]) => `${operation.operationId}${responseKey}`)
-          .join(' | ');
-        const renderedResponseBodyAggregatedType = `export type ${operation.operationId}Response = ${renderedResponseBodyTypes};`;
+      const renderedResponseBodyTypes = ts.createUnionTypeNode(
+        operationResponses.map(([responseKey]) =>
+          ts.createTypeReferenceNode(`${operation.operationId}${responseKey}`, undefined),
+        ),
+      );
+      const renderedResponseBodyAggregatedType = ts.createTypeAliasDeclaration(
+        [],
+        [cg.modifier.export],
+        `${operation.operationId}Response`,
+        [],
+        renderedResponseBodyTypes,
+      );
 
-        const renderedResponseBodyType = operationResponses.reduce((responses, [responseKey, response]) => {
-          const dereferencedResponse = isReferenceObject(response) ? resolveResponse(response, components) : response;
-          const responseSchema = dereferencedResponse.content?.['application/json']?.schema;
-          const renderedResponseBody = responseSchema !== undefined ? renderObject(responseSchema) : 'void';
+      const renderedResponseBodyType = operationResponses.map(([responseKey, response]) => {
+        const dereferencedResponse = isReferenceObject(response) ? resolveResponse(response, components) : response;
+        const responseSchema = dereferencedResponse.content?.['application/json']?.schema;
+        const renderedResponseBody =
+          responseSchema !== undefined ? renderObjectAux(responseSchema) : cg.keywordType.any;
 
-          const responseBodyType = `export type ${operation.operationId}${responseKey} = {
-  kind: ${responseKey};
-  value: ${renderedResponseBody};
-};`;
+        const responseBodyType = ts.createTypeAliasDeclaration(
+          [],
+          [cg.modifier.export],
+          `${operation.operationId}${responseKey}`,
+          [],
+          ts.createTypeLiteralNode([
+            cg.createPropertySignature({
+              questionToken: false,
+              name: 'kind',
+              type: ts.createLiteralTypeNode(ts.createLiteral(responseKey)),
+            }),
+            cg.createPropertySignature({
+              questionToken: false,
+              name: 'value',
+              type: renderedResponseBody,
+            }),
+          ]),
+        );
 
-          return `${responses}\n${responseBodyType}`;
-        }, '');
-        return renderedResponseBodyAggregatedType + renderedResponseBodyType + '\n';
+        return responseBodyType;
       });
-      return renderedResponseBodyTypes;
-    })
-    .join('\n');
 
-  return (
-    renderedOperationsResponseBodyTypes +
-    '\n\n' +
-    Object.keys(responses)
-      .map(key => {
-        return `export type ${key} = ${renderResponsesType(responses[key])};`;
-      })
-      .join('\n')
-  );
+      return [renderedResponseBodyAggregatedType, ...renderedResponseBodyType];
+    });
+  });
+
+  return [
+    ...renderedOperationsResponseBodyTypes,
+    ...Object.keys(responses).map(key => {
+      return ts.createTypeAliasDeclaration([], [cg.modifier.export], key, [], renderResponsesType(responses[key]));
+    }),
+  ];
 }
 
-function renderArgumentParameters(params: Array<RenderableParameter>): string | undefined {
+function renderArgumentParameters(params: Array<RenderableParameter>): ts.TypeLiteralNode | undefined {
   if (params.length === 0) return;
 
-  return (
-    '{ ' +
-    params
-      .map(param => {
-        const required = param.required ?? false ? '' : '?';
-        return `${param.name}${required}: ${param.renderedType};`;
-      })
-      .join(' ') +
-    ' }'
-  );
+  const members = params.map(param => {
+    const required = param.required ?? false;
+    return cg.createPropertySignature({
+      questionToken: !required,
+      name: param.name,
+      type: param.renderedType,
+    });
+  });
+  return ts.createTypeLiteralNode(members);
 }
 
 import toJsonSchema from '@openapi-contrib/openapi-schema-to-json-schema';
@@ -258,7 +265,7 @@ import toJsonSchema from '@openapi-contrib/openapi-schema-to-json-schema';
 type RenderableParameter = {
   name: string;
   required: boolean;
-  renderedType: string;
+  renderedType: ts.TypeNode;
 };
 
 function renderOperation(
@@ -267,7 +274,7 @@ function renderOperation(
   parameters: Array<ReferenceObject | ParameterObject>,
   operation: OperationObject,
   components: ResolvedComponentsObject,
-): string {
+): ts.ClassElement {
   const operationParameters = operation.parameters || [];
   const allParameters = parameters.concat(operationParameters);
 
@@ -320,119 +327,141 @@ function renderOperation(
   const queryParamType = renderArgumentParameters(query);
   const bodyType = operation.requestBody !== undefined ? renderRequestBodyType(operation.requestBody) : undefined;
 
-  return `${operation.operationId}(
-  ${pathParamType !== undefined ? `pathParams: ${pathParamType},` : ''}
-  ${headerParamType !== undefined ? `headerParams: ${headerParamType},` : ''}
-  ${queryParamType !== undefined ? `queryParams: ${queryParamType},` : ''}
-  ${bodyType !== undefined ? `body: ${bodyType},` : ''}
-): Promise<Responses.${operation.operationId}Response> {
-  return this.performRequest(
-    '${operationName.toUpperCase()}',
-    '${pattern}',
-    ${pathParamType !== undefined ? `pathParams,` : '{},'}
-    ${headerParamType !== undefined ? `headerParams,` : '{},'}
-    ${queryParamType !== undefined ? `queryParams,` : '{},'}
-    ${bodyType !== undefined ? `body,` : 'null,'}
-    ${JSON.stringify(responseSchemas)},
-  ).then((responseJson) => { return responseJson as Promise<Responses.${operation.operationId}Response>; });
-}`;
+  const methodParams = [];
+  if (pathParamType !== undefined) {
+    methodParams.push(
+      cg.createParameter('pathParams', {
+        type: pathParamType,
+        questionToken: false,
+      }),
+    );
+  }
+  if (headerParamType !== undefined) {
+    methodParams.push(
+      cg.createParameter('headerParams', {
+        type: headerParamType,
+        questionToken: false,
+      }),
+    );
+  }
+  if (queryParamType !== undefined) {
+    methodParams.push(
+      cg.createParameter('queryParams', {
+        type: queryParamType,
+        questionToken: false,
+      }),
+    );
+  }
+  if (bodyType !== undefined) {
+    methodParams.push(
+      cg.createParameter('body', {
+        type: bodyType,
+        questionToken: false,
+      }),
+    );
+  }
+
+  const methodArguments: ts.Expression[] = [ts.createLiteral(operationName.toUpperCase()), ts.createLiteral(pattern)];
+  if (pathParamType !== undefined) {
+    methodArguments.push(ts.createIdentifier('pathParams'));
+  } else {
+    methodArguments.push(ts.createObjectLiteral([]));
+  }
+  if (headerParamType !== undefined) {
+    methodArguments.push(ts.createIdentifier('headerParams'));
+  } else {
+    methodArguments.push(ts.createObjectLiteral([]));
+  }
+  if (queryParamType !== undefined) {
+    methodArguments.push(ts.createIdentifier('queryParams'));
+  } else {
+    methodArguments.push(ts.createObjectLiteral([]));
+  }
+  if (bodyType !== undefined) {
+    methodArguments.push(ts.createIdentifier('body'));
+  } else {
+    methodArguments.push(ts.createNull());
+  }
+
+  // HACK: HUUUUUUUUUGE hammer to convert an object in a literal
+  methodArguments.push(ts.parseJsonText('someFileName.ts', JSON.stringify(responseSchemas)).statements[0].expression);
+
+  return cg.createMethodDeclaration(
+    operation.operationId,
+    {
+      type: ts.createTypeReferenceNode('Promise', [
+        ts.createTypeReferenceNode(
+          ts.createQualifiedName(ts.createIdentifier('Responses'), `${operation.operationId}Response`),
+          undefined,
+        ),
+      ]),
+    },
+    methodParams,
+    cg.block(
+      ts.createReturn(
+        cg.createCall(
+          ts.createPropertyAccess(
+            cg.createCall(ts.createPropertyAccess(ts.createIdentifier('this'), 'performRequest'), {
+              args: methodArguments,
+            }),
+            'then',
+          ),
+          {
+            args: [
+              cg.createArrowFunction(
+                [cg.createParameter('responseJson', {})],
+                ts.createAsExpression(
+                  ts.createIdentifier('responseJson'),
+                  ts.createTypeReferenceNode('Promise', [
+                    ts.createTypeReferenceNode(
+                      ts.createQualifiedName(ts.createIdentifier('Responses'), `${operation.operationId}Response`),
+                      undefined,
+                    ),
+                  ]),
+                ),
+                {},
+              ),
+            ],
+          },
+        ),
+      ),
+    ),
+  );
 }
 
-function renderPath(pattern: string, path: PathItemObject, components: ResolvedComponentsObject): string {
+function renderPath(pattern: string, path: PathItemObject, components: ResolvedComponentsObject): ts.ClassElement[] {
   const commonParameters = path.parameters || [];
   const operations: Array<[string, OperationObject]> = getOperations(path);
 
-  return operations
-    .map(([operationName, operation]) =>
-      renderOperation(pattern, operationName, commonParameters, operation, components),
-    )
-    .join('\n');
+  return operations.map(([operationName, operation]) =>
+    renderOperation(pattern, operationName, commonParameters, operation, components),
+  );
 }
 
-function renderPaths(paths: PathsObject, components: ResolvedComponentsObject): string {
-  return Object.entries(paths)
-    .map(([pattern, pathObject]) => renderPath(pattern, pathObject, components))
-    .join('\n');
+function renderPaths(paths: PathsObject, components: ResolvedComponentsObject): ts.ClassElement[] {
+  return Object.entries(paths).flatMap(([pattern, pathObject]) => renderPath(pattern, pathObject, components));
 }
 
-function renderClient(baseUrl: string, endpoints: string): string {
-  return `
-import { URL } from 'url';
-import fetch from 'isomorphic-unfetch';
-import { Schema, Validator } from 'jsonschema';
+function renderClient(baseUrl: string, endpoints: ts.ClassElement[]): ts.NodeArray<ts.Statement> {
+  // Parse ClientStub.ts so that we do not have to generate everything manually
+  const stub = cg.parseFile(path.resolve(__dirname, '../../src/openapi/ClientStub.ts'));
 
-type Parameter = number | boolean | string | undefined;
-type ResponseSchemas = { [statusCode: string]: Schema };
+  const clientClass: ts.ClassDeclaration = cg.findNode<ts.ClassDeclaration>(
+    stub.statements,
+    ts.SyntaxKind.ClassDeclaration,
+  );
 
-export class Client {
-  readonly baseUrl: string = '${baseUrl}';
-  readonly validator: Validator = new Validator();
+  const baseUrlDeclaration: ts.PropertyDeclaration = cg.findNode<ts.PropertyDeclaration>(
+    clientClass.members,
+    ts.SyntaxKind.PropertyDeclaration,
+  );
+  // Inject base url
+  baseUrlDeclaration.initializer = ts.createStringLiteral(baseUrl);
 
-  constructor(baseUrl?: string) {
-    if(baseUrl !== undefined) this.baseUrl = baseUrl;
-  }
+  // Inject endpoint methods
+  clientClass.members = cg.appendNodes(clientClass.members, ...endpoints);
 
-  removeNulls(instance: { [key: string]: unknown }, property: string): void {
-    const value = instance[property];
-    if (value === null || typeof value == 'undefined') {
-      delete instance[property];
-    }
-  }
-
-  performRequest(
-    method: string,
-    path: string,
-    pathParams: { [key: string]: Parameter } = {},
-    headerParams: { [key: string]: Parameter } = {},
-    queryParams: { [key: string]: Parameter } = {},
-    body: unknown,
-    responseSchemas: ResponseSchemas,
-  ): Promise<unknown> {
-    const requestUrl = new URL(this.baseUrl);
-  
-    const replacedPath = Object.entries(pathParams).reduce((url, [paramKey, paramValue]) => {
-      return paramValue !== undefined ? url.replace(\`{\${paramKey}}\`, paramValue.toString()) : url;
-    }, path);
-  
-    requestUrl.pathname = requestUrl.pathname + replacedPath;
-  
-    Object.entries(queryParams).forEach(([queryParamKey, queryParamValue]) => {
-      if (queryParamValue !== undefined) requestUrl.searchParams.append(queryParamKey, queryParamValue.toString());
-    });
-  
-    const headers = Object.entries(headerParams).reduce((headers, [headerName, headerValue]) => {
-      if (headerValue !== undefined) headers.push([headerName, headerValue.toString()]);
-      return headers;
-    }, new Array<[string, string]>());
-  
-    const bodyParam = body !== null ? { body: JSON.stringify(body) } : {};
-  
-    return fetch(requestUrl.toString(), {
-      method,
-      headers,
-      ...bodyParam,
-    }).then(async response => {
-      const responseJson = await response.json();
-      const validationOptions = { allowUnknownAttributes: true, preValidateProperty: this.removeNulls };
-      const responseSchema: Schema | undefined = responseSchemas[response.status.toString()];
-      const validationResponse =
-        responseSchema !== undefined
-          ? this.validator.validate(responseJson, responseSchema, validationOptions)
-          : { valid: false, errors: { message: \`Response status \${response.status} does not have a schema defined.\` } };
-      if (validationResponse.valid) {
-        return {
-          kind: response.status,
-          value: responseJson
-        };
-      }
-
-      const errorBody = await response.body.read().toString('utf-8');
-      throw new Error(\`Failed to validate schema of response with status \${response.status} and body:\\n\${errorBody}\`);
-    });
-  }
-
-  ${endpoints}
-}`;
+  return stub.statements;
 }
 
 function renderEmptyExport(): string {
@@ -443,21 +472,15 @@ function renderSchemaTypeImports(basePath: string): string {
   return `/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable import/namespace */
 // @ts-nocheck
-import * as Schemas from '${basePath}/schemas';`;
+import * as Schemas from '${basePath}schemas';`;
 }
 
 function renderTypeImports(basePath: string): string {
   return `${renderSchemaTypeImports(basePath)}
-import * as RequestBodies from '${basePath}/requestBodies';
-import * as Parameters from '${basePath}/parameters';
-import * as Responses from '${basePath}/responses';`;
+import * as RequestBodies from '${basePath}requestBodies';
+import * as Parameters from '${basePath}parameters';
+import * as Responses from '${basePath}responses';`;
 }
-
-import SwaggerParser from '@apidevtools/swagger-parser';
-import { OpenAPI, OpenAPIV3 } from 'openapi-types';
-import swagger2openapi from 'swagger2openapi';
-import fs from 'fs';
-import path from 'path';
 
 function isOpenAPIV3Document(obj: unknown): obj is OpenAPIV3.Document {
   return (obj as OpenAPIV3.Document).openapi !== undefined;
@@ -498,28 +521,30 @@ export async function render(filename: string, output: string): Promise<void> {
     const modelsOutput = path.join(output, 'models');
     fs.mkdirSync(modelsOutput, { recursive: true });
 
-    const schemasStr = [renderSchemaTypeImports('./'), renderSchema(document.components?.schemas)].join('\n\n');
+    const schemasStr = [renderSchemaTypeImports('./'), cg.printNodes(renderSchema(document.components?.schemas))].join(
+      '\n\n',
+    );
     fs.writeFileSync(`${modelsOutput}/schemas.ts`, schemasStr);
 
     const requestBodiesStr = [
       renderSchemaTypeImports('./'),
       // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
       // @ts-ignore
-      renderRequestBodies(document.components?.requestBodies),
+      cg.printNodes(renderRequestBodies(document.components?.requestBodies)),
       renderEmptyExport(),
     ].join('\n\n');
     fs.writeFileSync(`${modelsOutput}/requestBodies.ts`, requestBodiesStr);
 
     // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
     // @ts-ignore
-    const parametersStr = renderParameters(document.components?.parameters);
+    const parametersStr = cg.printNodes(renderParameters(document.components?.parameters));
     fs.writeFileSync(`${modelsOutput}/parameters.ts`, parametersStr);
 
     const responsesStr = [
       renderSchemaTypeImports('./'),
       // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
       // @ts-ignore
-      renderResponses(document.paths, document.components?.responses),
+      cg.printNodes(renderResponses(document.paths, document.components?.responses)),
       renderEmptyExport(),
     ].join('\n\n');
     fs.writeFileSync(`${modelsOutput}/responses.ts`, responsesStr);
@@ -529,7 +554,8 @@ export async function render(filename: string, output: string): Promise<void> {
     // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
     // @ts-ignore
     const endpoints = renderPaths(document.paths, documentDereferenced.components);
-    const clientStr = [renderTypeImports('./models'), renderClient(baseUrl, endpoints)].join('\n\n');
+    const clientStatements = cg.printNodeArray(renderClient(baseUrl, endpoints));
+    const clientStr = [renderTypeImports('./models'), clientStatements].join('\n\n');
     fs.writeFileSync(`${output}/client.ts`, clientStr);
   } else {
     throw new Error(`Path ${output} already exists and is not a directory`);
