@@ -177,6 +177,9 @@ function getOperations(path: PathItemObject): Array<[string, OperationObject]> {
   if (path.post !== undefined) operations.push(['POST', path.post]);
   if (path.patch !== undefined) operations.push(['PATCH', path.patch]);
   if (path.delete !== undefined) operations.push(['DELETE', path.delete]);
+  if (path.options !== undefined) operations.push(['DELETE', path.options]);
+  if (path.head !== undefined) operations.push(['DELETE', path.head]);
+  if (path.trace !== undefined) operations.push(['DELETE', path.trace]);
 
   return operations;
 }

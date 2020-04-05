@@ -112,6 +112,9 @@ export interface PathItemObject {
   post?: OperationObject;
   delete?: OperationObject;
   patch?: OperationObject;
+  options?: OperationObject;
+  head?: OperationObject;
+  trace?: OperationObject;
 }
 
 export interface PathsObject {
