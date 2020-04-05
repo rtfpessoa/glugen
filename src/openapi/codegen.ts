@@ -199,6 +199,20 @@ export function createParameter(
   );
 }
 
+export function createImport(namespaceAlias: ts.Identifier, moduleSpecifier: ts.Expression): ts.ImportDeclaration {
+  return ts.createImportDeclaration(
+    [],
+    [],
+    ts.createImportClause(
+      undefined,
+      // ts.createImportSpecifier(ts.createIdentifier('OneType'), ts.createIdentifier('OtherType')),
+      ts.createNamespaceImport(namespaceAlias),
+      undefined,
+    ),
+    moduleSpecifier,
+  );
+}
+
 const printer = ts.createPrinter({
   newLine: ts.NewLineKind.LineFeed,
 });

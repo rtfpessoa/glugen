@@ -7,6 +7,7 @@ import { OpenAPI, OpenAPIV3 } from 'openapi-types';
 import swagger2openapi from 'swagger2openapi';
 
 import {
+  Document,
   ReferenceObject,
   OAObject,
   ComponentsObject,
@@ -20,6 +21,8 @@ import {
   SchemaObject,
 } from './types';
 import * as cg from './codegen';
+
+// type importableSources = 'schemas' | 'parameters' | 'requestBodies' | 'responses';
 
 function capitalize(str: string): string {
   return `${str.charAt(0).toUpperCase()}${str.slice(1)}`;
@@ -38,13 +41,13 @@ function isNullable(object: OAObject): boolean {
   return object && typeof object === 'object' && 'nullable' in object;
 }
 
-function getTypeFromSchema(object: OAObject): ts.TypeNode {
+function getNullableTypeFromSchema(object: OAObject): ts.TypeNode {
   // eslint-disable-next-line @typescript-eslint/no-use-before-define
-  const type = renderObjectAux(object);
+  const type = getTypeFromSchema(object);
   return isNullable(object) ? ts.createUnionTypeNode([type, cg.keywordType.null]) : type;
 }
 
-function renderObjectAux(object: OAObject): ts.TypeNode {
+function getTypeFromSchema(object: OAObject): ts.TypeNode {
   if (isReferenceObject(object)) {
     const name = getRefName(object.$ref);
     return ts.createTypeReferenceNode(name, undefined);
@@ -55,7 +58,7 @@ function renderObjectAux(object: OAObject): ts.TypeNode {
       );
     } else if (object.type == 'array' && 'items' in object) {
       // TODO: How can we create a Set instead of an Array when `uniqueItems === true` ?
-      return ts.createArrayTypeNode(getTypeFromSchema(object.items));
+      return ts.createArrayTypeNode(getNullableTypeFromSchema(object.items));
     } else if (object.type === 'object') {
       if (object.properties !== undefined) {
         const members = Object.entries(object.properties).map(([propertyKey, propertyValue]) => {
@@ -63,14 +66,14 @@ function renderObjectAux(object: OAObject): ts.TypeNode {
           return cg.createPropertySignature({
             questionToken: !required.includes(propertyKey),
             name: propertyKey,
-            type: getTypeFromSchema(propertyValue),
+            type: getNullableTypeFromSchema(propertyValue),
           });
         });
         return ts.createTypeLiteralNode(members);
       } else if (object.oneOf !== undefined) {
-        return ts.createUnionTypeNode(object.oneOf.map(getTypeFromSchema));
+        return ts.createUnionTypeNode(object.oneOf.map(getNullableTypeFromSchema));
       } else if (object.allOf !== undefined) {
-        return ts.createIntersectionTypeNode(object.allOf.map(getTypeFromSchema));
+        return ts.createIntersectionTypeNode(object.allOf.map(getNullableTypeFromSchema));
       }
     } else if (object.type !== undefined) {
       return cg.keywordType[object.type];
@@ -80,14 +83,15 @@ function renderObjectAux(object: OAObject): ts.TypeNode {
   return cg.keywordType.any;
 }
 
-function renderSchema(schemas: ComponentsObject['schemas'] = {}): ts.TypeAliasDeclaration[] {
+function renderSchema(document: Document): ts.TypeAliasDeclaration[] {
+  const schemas = document.components?.schemas ?? {};
   return Object.keys(schemas).map(key => {
-    return ts.createTypeAliasDeclaration([], [cg.modifier.export], key, [], renderObjectAux(schemas[key]));
+    return ts.createTypeAliasDeclaration([], [cg.modifier.export], key, [], getTypeFromSchema(schemas[key]));
   });
 }
 
 function renderParameterType(parameter: ParameterObject | ReferenceObject): ts.TypeNode {
-  return isReferenceObject(parameter) ? renderObjectAux(parameter) : renderObjectAux(parameter.schema);
+  return isReferenceObject(parameter) ? getTypeFromSchema(parameter) : getTypeFromSchema(parameter.schema);
 }
 
 function renderParameters(parameters: ComponentsObject['parameters'] = {}): ts.TypeAliasDeclaration[] {
@@ -98,10 +102,10 @@ function renderParameters(parameters: ComponentsObject['parameters'] = {}): ts.T
 
 function renderRequestBodyType(requestBody: RequestBodyObject | ReferenceObject): ts.TypeNode {
   if (isReferenceObject(requestBody)) {
-    return renderObjectAux(requestBody);
+    return getTypeFromSchema(requestBody);
   } else {
     const required = requestBody.required ?? false;
-    const type = renderObjectAux(requestBody.content['application/json'].schema);
+    const type = getTypeFromSchema(requestBody.content['application/json'].schema);
     return required ? type : ts.createUnionTypeNode([type, cg.keywordType.null]);
   }
 }
@@ -114,9 +118,9 @@ function renderRequestBodies(requestBodies: ComponentsObject['requestBodies'] = 
 
 function renderResponsesType(response: ResponseObject | ReferenceObject): ts.TypeNode {
   if (isReferenceObject(response)) {
-    return renderObjectAux(response);
+    return getTypeFromSchema(response);
   } else if (response.content?.['application/json']?.schema !== undefined) {
-    return renderObjectAux(response.content['application/json'].schema);
+    return getTypeFromSchema(response.content['application/json'].schema);
   }
 
   return cg.keywordType.any;
@@ -213,7 +217,7 @@ function renderResponses(
         const dereferencedResponse = isReferenceObject(response) ? resolveResponse(response, components) : response;
         const responseSchema = dereferencedResponse.content?.['application/json']?.schema;
         const renderedResponseBody =
-          responseSchema !== undefined ? renderObjectAux(responseSchema) : cg.keywordType.any;
+          responseSchema !== undefined ? getTypeFromSchema(responseSchema) : cg.keywordType.any;
 
         const responseBodyType = ts.createTypeAliasDeclaration(
           [],
@@ -467,29 +471,47 @@ function renderClient(baseUrl: string, endpoints: ts.ClassElement[]): ts.NodeArr
   return stub.statements;
 }
 
-function renderEmptyExport(): string {
-  return `export {};`;
+function renderEmptyExport(): ts.ExportDeclaration {
+  return ts.createExportDeclaration([], [], undefined, ts.createObjectLiteral([]));
 }
 
-function renderSchemaTypeImports(basePath: string): string {
-  return `/* eslint-disable @typescript-eslint/no-unused-vars */
-/* eslint-disable import/namespace */
-// @ts-nocheck
-import * as Schemas from '${basePath}schemas';`;
+function renderSchemaTypeImports(basePath: string): ts.ImportDeclaration {
+  const importNode = cg.createImport(
+    ts.createIdentifier('Schemas'),
+    ts.createStringLiteral(path.join(basePath, 'schemas')),
+  );
+
+  ts.addSyntheticLeadingComment(
+    importNode,
+    ts.SyntaxKind.SingleLineCommentTrivia,
+    'eslint-disable @typescript-eslint/no-unused-vars',
+    false,
+  );
+  ts.addSyntheticLeadingComment(
+    importNode,
+    ts.SyntaxKind.SingleLineCommentTrivia,
+    'eslint-disable import/namespace',
+    false,
+  );
+  ts.addSyntheticLeadingComment(importNode, ts.SyntaxKind.SingleLineCommentTrivia, '@ts-nocheck', false);
+
+  return importNode;
 }
 
-function renderTypeImports(basePath: string): string {
-  return `${renderSchemaTypeImports(basePath)}
-import * as RequestBodies from '${basePath}requestBodies';
-import * as Parameters from '${basePath}parameters';
-import * as Responses from '${basePath}responses';`;
+function renderTypeImports(basePath: string): ts.ImportDeclaration[] {
+  return [
+    renderSchemaTypeImports(basePath),
+    cg.createImport(ts.createIdentifier('RequestBodies'), ts.createStringLiteral(path.join(basePath, 'requestBodies'))),
+    cg.createImport(ts.createIdentifier('Parameters'), ts.createStringLiteral(path.join(basePath, 'parameters'))),
+    cg.createImport(ts.createIdentifier('Responses'), ts.createStringLiteral(path.join(basePath, 'responses'))),
+  ];
 }
 
 function isOpenAPIV3Document(obj: unknown): obj is OpenAPIV3.Document {
   return (obj as OpenAPIV3.Document).openapi !== undefined;
 }
 
-async function loadOpenAPI(filename: string): Promise<[OpenAPIV3.Document, OpenAPIV3.Document]> {
+async function loadOpenAPI(filename: string): Promise<[Document, ResolvedComponentsObject]> {
   const parser = new SwaggerParser();
 
   let filenameToParse = filename;
@@ -514,52 +536,46 @@ async function loadOpenAPI(filename: string): Promise<[OpenAPIV3.Document, OpenA
     throw new Error('Problem occured while preparing your specification');
   }
 
-  return [parsedDocument, dereferencedDocument];
+  return [parsedDocument as Document, (dereferencedDocument.components ?? {}) as ResolvedComponentsObject];
 }
 
 export async function render(filename: string, output: string): Promise<void> {
-  const [document, documentDereferenced] = await loadOpenAPI(filename);
+  const [document, dereferencedComponents] = await loadOpenAPI(filename);
 
   if (!fs.existsSync(output) || fs.lstatSync(output).isDirectory()) {
     const modelsOutput = path.join(output, 'models');
     fs.mkdirSync(modelsOutput, { recursive: true });
 
-    const schemasStr = [renderSchemaTypeImports('./'), cg.printNodes(renderSchema(document.components?.schemas))].join(
-      '\n\n',
+    const schemas = renderSchema(document);
+    fs.writeFileSync(`${modelsOutput}/schemas.ts`, cg.printNodes([renderSchemaTypeImports('./'), ...schemas]));
+
+    fs.writeFileSync(`${modelsOutput}/parameters.ts`, cg.printNodes(renderParameters(document.components?.parameters)));
+
+    fs.writeFileSync(
+      `${modelsOutput}/requestBodies.ts`,
+      cg.printNodes([
+        renderSchemaTypeImports('./'),
+        ...renderRequestBodies(document.components?.requestBodies),
+        renderEmptyExport(),
+      ]),
     );
-    fs.writeFileSync(`${modelsOutput}/schemas.ts`, schemasStr);
 
-    const requestBodiesStr = [
-      renderSchemaTypeImports('./'),
-      // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
-      // @ts-ignore
-      cg.printNodes(renderRequestBodies(document.components?.requestBodies)),
-      renderEmptyExport(),
-    ].join('\n\n');
-    fs.writeFileSync(`${modelsOutput}/requestBodies.ts`, requestBodiesStr);
-
-    // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
-    // @ts-ignore
-    const parametersStr = cg.printNodes(renderParameters(document.components?.parameters));
-    fs.writeFileSync(`${modelsOutput}/parameters.ts`, parametersStr);
-
-    const responsesStr = [
-      renderSchemaTypeImports('./'),
-      // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
-      // @ts-ignore
-      cg.printNodes(renderResponses(document.paths, document.components?.responses)),
-      renderEmptyExport(),
-    ].join('\n\n');
-    fs.writeFileSync(`${modelsOutput}/responses.ts`, responsesStr);
+    fs.writeFileSync(
+      `${modelsOutput}/responses.ts`,
+      cg.printNodes([
+        renderSchemaTypeImports('./'),
+        ...renderResponses(document.paths, document.components?.responses, dereferencedComponents.responses ?? {}),
+        renderEmptyExport(),
+      ]),
+    );
 
     // TODO: Handle multiple servers
     const baseUrl = document.servers?.[0].url ?? 'http://localhost:9000';
-    // eslint-disable-next-line @typescript-eslint/ban-ts-ignore
-    // @ts-ignore
-    const endpoints = renderPaths(document.paths, documentDereferenced.components);
-    const clientStatements = cg.printNodeArray(renderClient(baseUrl, endpoints));
-    const clientStr = [renderTypeImports('./models'), clientStatements].join('\n\n');
-    fs.writeFileSync(`${output}/client.ts`, clientStr);
+    const endpoints = renderPaths(document.paths, dereferencedComponents);
+    fs.writeFileSync(
+      `${output}/client.ts`,
+      cg.printNodes([...renderTypeImports('./models'), ...renderClient(baseUrl, endpoints)]),
+    );
   } else {
     throw new Error(`Path ${output} already exists and is not a directory`);
   }
