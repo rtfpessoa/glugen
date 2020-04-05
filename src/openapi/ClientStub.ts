@@ -4,8 +4,7 @@
  */
 
 import { URL } from 'url';
-// import fetch from 'isomorphic-unfetch';
-import fetch from 'node-fetch';
+import fetch from 'cross-fetch';
 import { Schema, Validator } from 'jsonschema';
 
 type Parameter = number | boolean | string | undefined;
@@ -76,7 +75,7 @@ export class Client {
         };
       }
 
-      const errorBody = await response.body.read().toString('utf-8');
+      const errorBody = await response.text();
       throw new Error(`Failed to validate schema of response with status ${response.status} and body:\n${errorBody}`);
     });
   }
