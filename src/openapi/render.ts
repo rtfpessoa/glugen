@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import tmp from 'tmp';
 
 import ts, { QualifiedName } from 'typescript';
 import SwaggerParser from '@apidevtools/swagger-parser';
@@ -22,7 +23,21 @@ import {
 } from './types';
 import * as cg from './codegen';
 
-// type importableSources = 'schemas' | 'parameters' | 'requestBodies' | 'responses';
+// type Referenceable = 'schema' | 'parameter' | 'requestBody' | 'response';
+
+// // type ReferenceableObject = SchemaObject | ParameterObject | RequestBodyObject | ResponseObject;
+
+// // const foo: { [key in Referenceable]: ReferenceableObject } = {
+// //   schema: SchemaObject,
+// //   schema: SchemaObject,
+// // };
+
+// // Ref -> [exportName: string, typeNode: ts.Node]
+// // Ref -> [referenceType: ReferenceableObject, typeReferenceNode: ts.TypeReferenceNode]
+
+// function resolve<T>(object: ReferenceObject, location: string[], refType: Referenceable): T {
+//   return {} as T;
+// }
 
 function capitalize(str: string): string {
   return `${str.charAt(0).toUpperCase()}${str.slice(1)}`;
@@ -41,6 +56,7 @@ function isNullable(object: OAObject): boolean {
   return object && typeof object === 'object' && 'nullable' in object;
 }
 
+// TODO: Move this into getTypeFromSchema ???
 function getNullableTypeFromSchema(object: OAObject): ts.TypeNode {
   // eslint-disable-next-line @typescript-eslint/no-use-before-define
   const type = getTypeFromSchema(object);
@@ -515,21 +531,28 @@ async function loadOpenAPI(filename: string): Promise<[Document, ResolvedCompone
   const parser = new SwaggerParser();
 
   let filenameToParse = filename;
-  let parsedDocument: OpenAPI.Document = await parser.parse(filename);
-  if (!isOpenAPIV3Document(parsedDocument)) {
-    const apiObject = (await swagger2openapi.convertFile(filename, { anchors: true })).openapi;
-    const tmpDirectory = fs.mkdtempSync('glugen');
-    const tmpFile = path.join(tmpDirectory, 'api.json');
-    fs.writeFileSync(tmpFile, JSON.stringify(apiObject));
-    filenameToParse = tmpFile;
-    parsedDocument = await parser.parse(filenameToParse);
-  }
+  const parseOptions = {
+    validate: {
+      schema: true,
+      spec: true,
+    },
+  };
+  let parsedDocument: OpenAPI.Document = await parser.parse(filename, parseOptions);
+  let dereferencedDocument: OpenAPI.Document;
+  try {
+    if (!isOpenAPIV3Document(parsedDocument)) {
+      const apiObject = (await swagger2openapi.convertFile(filename, { anchors: true })).openapi;
+      const tmpFile = `${path.basename(tmp.tmpNameSync({ prefix: 'glugen-api' }))}.json`;
+      fs.writeFileSync(tmpFile, JSON.stringify(apiObject));
+      filenameToParse = tmpFile;
+      parsedDocument = await parser.parse(filenameToParse, parseOptions);
+    }
 
-  const dereferencedDocument: OpenAPI.Document = await parser.dereference(filenameToParse);
-
-  if (filenameToParse !== filename) {
-    fs.unlinkSync(filenameToParse);
-    fs.rmdirSync(path.dirname(filenameToParse));
+    dereferencedDocument = await parser.dereference(filenameToParse);
+  } finally {
+    if (filenameToParse !== filename) {
+      fs.unlinkSync(filenameToParse);
+    }
   }
 
   if (!isOpenAPIV3Document(parsedDocument) || !isOpenAPIV3Document(dereferencedDocument)) {
